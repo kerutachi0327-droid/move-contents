@@ -1,0 +1,12 @@
+{
+  "_comment": "このファイルを config.json にコピーして使います。APIキーはここに書くか .env で指定してください（コードには埋め込みません）。",
+  "llm_provider": "stub",
+  "llm_api_key": "",
+  "llm_base_url": "https://api.openai.com/v1",
+  "llm_model": "gpt-4o-mini",
+  "voice": "ja-JP-NanamiNeural",
+  "rate": "+8%",
+  "fps": 30,
+  "out_root": "",
+  "template": ""
+}
