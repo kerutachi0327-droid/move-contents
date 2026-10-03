@@ -1,0 +1,4 @@
+# クラウド環境など edge-tts（Microsoft音声）に接続できない環境向けのオフライン音声
+-r requirements.txt
+pyopenjtalk-plus>=0.4
+numpy

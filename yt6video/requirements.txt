@@ -1,0 +1,6 @@
+edge-tts>=7.0.0
+youtube-transcript-api>=1.0.0
+yt-dlp>=2024.1.0
+Pillow>=10.0.0
+# tkinter は Python 同梱（Windows/macOSの公式インストーラに含まれます）
+# Linux は別途: sudo apt-get install -y python3-tk
