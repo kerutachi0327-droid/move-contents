@@ -159,5 +159,8 @@ cd yt6video
 
 - **音声**：既定の `--tts auto` は edge-tts を試し、接続できなければ自動で **オフライン音声（pyopenjtalk）** に切り替えます。
   `--tts openjtalk` で最初からオフライン、`--tts edge` で edge-tts 固定（失敗時はエラー）。どちらを使ったかは `report.txt` の「音声」欄に出ます。
-- **YouTube**：環境のネットワーク設定で `www.youtube.com` が許可されていないと、タイトル・字幕は取得できません。
-  許可するか、`--transcript-file 文字起こし.txt` を付けて実行してください。
+- **YouTube**：`www.youtube.com` をネットワーク設定で許可すると**タイトルは取得できます**が、
+  **字幕は YouTube 側がクラウドのサーバーをロボット扱いして拒否**します（確認画面へ転送）。
+  クラウドでは `--transcript-file 文字起こし.txt` を付けて実行してください。
+- **edge-tts**：`speech.platform.bing.com` を許可しても、Microsoft 側がクラウドからの接続を 403 で拒否します。
+  `--tts auto`（既定）なら自動でオフライン音声になります。
