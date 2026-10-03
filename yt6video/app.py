@@ -23,6 +23,8 @@ def parse_args(argv=None):
     ap.add_argument("--config", help="config.json / .env のパス")
     ap.add_argument("--template", help="テンプレートJSONのパス（既定: template/series_template.json）")
     ap.add_argument("--voice", help="音声（例 ja-JP-NanamiNeural / ja-JP-KeitaNeural / ja-JP-NanamiNeural-Female）")
+    ap.add_argument("--tts", choices=["auto", "edge", "openjtalk"],
+                    help="音声エンジン（既定 auto: edge-tts、使えなければオフラインの pyopenjtalk）")
     ap.add_argument("--rate", help="話速（例 +8%%）")
     ap.add_argument("--fps", type=int, help="フレームレート（既定 30）")
     ap.add_argument("--episodes", help="一部だけ作る（例 0 1 5 / 既定は全6本）")
@@ -39,6 +41,8 @@ def build_cfg(a):
         cfg["template"] = a.template
     if a.voice:
         cfg["voice"] = a.voice
+    if a.tts:
+        cfg["tts_engine"] = a.tts
     if a.rate:
         cfg["rate"] = a.rate
     if a.fps:

@@ -144,3 +144,20 @@ python app.py --url "https://www.youtube.com/watch?v=XXXXXXXXXXX" --transcript-f
 - 台本AIのみ、使う場合はご自身のAPIキー分の従量課金
 
 つまり **APIキーを使わない `stub` 運用なら完全無料**で6本を書き出せます。
+
+---
+
+## 8. クラウド環境（Claude Code on the web など）で動かす
+
+GUIは使えないので CLI で実行します。セットアップはスクリプト1本です。
+
+```bash
+cd yt6video
+./setup_cloud.sh          # 日本語フォント・ffmpeg・ライブラリ（オフライン音声込み）を導入
+.venv/bin/python app.py --url "https://www.youtube.com/watch?v=XXXX" --out ./output
+```
+
+- **音声**：既定の `--tts auto` は edge-tts を試し、接続できなければ自動で **オフライン音声（pyopenjtalk）** に切り替えます。
+  `--tts openjtalk` で最初からオフライン、`--tts edge` で edge-tts 固定（失敗時はエラー）。どちらを使ったかは `report.txt` の「音声」欄に出ます。
+- **YouTube**：環境のネットワーク設定で `www.youtube.com` が許可されていないと、タイトル・字幕は取得できません。
+  許可するか、`--transcript-file 文字起こし.txt` を付けて実行してください。

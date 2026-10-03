@@ -46,12 +46,13 @@ def load_config(path=None, base=None):
                     cfg[m.group(1).lower()] = m.group(2).strip().strip('"').strip("'")
     for k, v in {"llm_provider": "LLM_PROVIDER", "llm_api_key": "LLM_API_KEY",
                  "llm_base_url": "LLM_BASE_URL", "llm_model": "LLM_MODEL",
-                 "voice": "TTS_VOICE", "fps": "FPS"}.items():
+                 "voice": "TTS_VOICE", "tts_engine": "TTS_ENGINE", "fps": "FPS"}.items():
         if os.environ.get(v):
             cfg[k] = os.environ[v]
     cfg.setdefault("llm_provider", "stub")
     cfg.setdefault("voice", "ja-JP-NanamiNeural")
     cfg.setdefault("rate", "+8%")
+    cfg.setdefault("tts_engine", "auto")
     cfg.setdefault("fps", 30)
     cfg.setdefault("max_silence_db", -50.0)
     cfg.setdefault("out_root", os.path.join(os.path.expanduser("~"), "Downloads"))
@@ -266,21 +267,67 @@ def mean_volume(path, ss=None, t=None):
 
 async def _tts_save(text, out, voice, rate):
     import edge_tts
+    ca = os.environ.get("SSL_CERT_FILE")
+    if ca and os.path.exists(ca) and hasattr(edge_tts, "communicate"):
+        # edge-tts は certifi 固定のため、プロキシ環境では指定のCAバンドルを使う
+        import ssl
+        edge_tts.communicate._SSL_CTX = ssl.create_default_context(cafile=ca)
     await edge_tts.Communicate(text, voice, rate=rate).save(out)
 
 
-def tts(text, out, voice, rate, log=log_default, retries=3):
+def _rate_to_speed(rate):
+    m = re.match(r"\s*([+-]?\d+(?:\.\d+)?)\s*%", str(rate or ""))
+    return max(0.5, min(2.0, 1.0 + float(m.group(1)) / 100.0)) if m else 1.0
+
+
+def _openjtalk_save(text, out, rate):
+    """オフライン音声（pyopenjtalk）。ネットワーク不要。"""
+    import wave
+    import numpy as np
+    import pyopenjtalk
+    x, sr = pyopenjtalk.tts(text, speed=_rate_to_speed(rate))
+    wav = out + ".wav"
+    with wave.open(wav, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(np.clip(x, -32768, 32767).astype(np.int16).tobytes())
+    try:
+        run_ff(["ffmpeg", "-y", "-loglevel", "error", "-i", wav, "-c:a", "libmp3lame", "-q:a", "2", out])
+    finally:
+        os.remove(wav)
+
+
+_EDGE_DOWN = False   # auto 時、edge-tts が一度失敗したら以降はオフライン音声に固定
+
+
+def tts(text, out, voice, rate, log=log_default, retries=3, engine="auto"):
+    """engine: auto（edge-tts → 失敗時 pyopenjtalk）/ edge / openjtalk"""
+    global _EDGE_DOWN
+    ok = lambda: os.path.exists(out) and os.path.getsize(out) > 1200 and dur(out) > 0.4
     last = None
-    for k in range(retries):
-        try:
-            asyncio.run(_tts_save(text, out, voice, rate))
-            if os.path.exists(out) and os.path.getsize(out) > 1200 and dur(out) > 0.4:
-                return out
-            last = "生成結果が空"
-        except Exception as e:
-            last = "%s: %s" % (type(e).__name__, e)
-        log("[tts] 再試行 %d/%d (%s)" % (k + 1, retries, last))
-    raise RuntimeError("音声合成に失敗: %s" % last)
+    if engine == "edge" or (engine == "auto" and not _EDGE_DOWN):
+        for k in range(retries):
+            try:
+                asyncio.run(_tts_save(text, out, voice, rate))
+                if ok():
+                    return out
+                last = "生成結果が空"
+            except Exception as e:
+                last = "%s: %s" % (type(e).__name__, e)
+            log("[tts] 再試行 %d/%d (%s)" % (k + 1, retries, last))
+        if engine == "edge":
+            raise RuntimeError("音声合成に失敗: %s" % last)
+        _EDGE_DOWN = True
+        log("[tts] edge-tts に接続できないため、オフライン音声(pyopenjtalk)に切り替えます")
+    try:
+        _openjtalk_save(text, out, rate)
+        if ok():
+            return out
+        last = "生成結果が空"
+    except Exception as e:
+        last = "%s: %s" % (type(e).__name__, e)
+    raise RuntimeError("音声合成に失敗(オフライン音声): %s" % last)
 
 
 def run_ff(args):
@@ -303,7 +350,7 @@ def build_episode(ep, workdir, cfg, log=log_default):
         SL.render(sp, png, ep["badge"], ep["accent"], cfg.get("images_dir"), no, slot)
         nar = narration_for(sp)
         mp3 = os.path.join(epdir, "nar%02d.mp3" % slot)
-        tts(nar, mp3, cfg["voice"], cfg.get("rate", "+8%"), log)
+        tts(nar, mp3, cfg["voice"], cfg.get("rate", "+8%"), log, engine=cfg["tts_engine"])
         nd = dur(mp3)
         D = max(nd + 0.8, 3.2)
         pre = os.path.join(epdir, "pre%02d.mp4" % slot)
@@ -326,7 +373,7 @@ def build_episode(ep, workdir, cfg, log=log_default):
         mv = mean_volume(seg)
         if mv is None or mv <= cfg["max_silence_db"]:
             log("[check] 無音を検知 EP%d スライド%d → 音声を作り直します" % (no, slot))
-            tts(nar, mp3, cfg["voice"], cfg.get("rate", "+8%"), log)
+            tts(nar, mp3, cfg["voice"], cfg.get("rate", "+8%"), log, engine=cfg["tts_engine"])
             run_ff(["ffmpeg", "-y", "-loglevel", "error", "-i", pre, "-i", mp3,
                     "-filter_complex", "[1:a]apad[a]", "-map", "0:v", "-map", "[a]",
                     "-c:v", "libx264", "-crf", "20", "-preset", "veryfast", "-c:a", "aac",
@@ -390,6 +437,7 @@ def run(url, out_root=None, cfg=None, log=log_default, episodes=None, fallback_t
     cfg = dict(cfg or load_config())
     cfg.setdefault("width", 1280)
     cfg.setdefault("height", 720)
+    cfg.setdefault("tts_engine", "auto")
     out_root = os.path.abspath(os.path.expanduser(out_root or cfg["out_root"]))
     tpl = load_json(cfg["template"]) or load_json(DEF_TPL)
     if not tpl:
@@ -427,8 +475,9 @@ def run(url, out_root=None, cfg=None, log=log_default, episodes=None, fallback_t
             continue
         results.append(build_episode(ep, folder, cfg, log))
 
+    used_engine = "openjtalk" if (cfg["tts_engine"] == "openjtalk" or _EDGE_DOWN) else "edge-tts"
     rep = {"url": url, "title": title, "folder": folder, "transcript_source": src,
-           "font": SL.font_report(), "voice": cfg["voice"], "resolution": "%dx%d" % (cfg["width"], cfg["height"]),
+           "font": SL.font_report(), "voice": cfg["voice"], "tts_engine": used_engine, "resolution": "%dx%d" % (cfg["width"], cfg["height"]),
            "caption_bar": False, "badge": True,
            "coverage_problems": problems, "episodes": results,
            "silent_total": sum(len(r["silent_slides"]) for r in results)}
@@ -436,7 +485,8 @@ def run(url, out_root=None, cfg=None, log=log_default, episodes=None, fallback_t
         json.dump(rep, f, ensure_ascii=False, indent=2)
     with open(os.path.join(folder, "report.txt"), "w", encoding="utf-8") as f:
         f.write("YouTube → 6本のコンテンツ動画  実行レポート\n")
-        f.write("元動画 : %s\nタイトル: %s\n文字起こし: %s\n音声: %s\n" % (url, title, src, cfg["voice"]))
+        f.write("元動画 : %s\nタイトル: %s\n文字起こし: %s\n音声: %s\n" % (url, title, src,
+                cfg["voice"] if used_engine == "edge-tts" else "pyopenjtalk（オフライン音声）"))
         f.write("出力: %s\n\n" % folder)
         f.write("[ナレーション網羅チェック] %s\n" % ("問題なし（全項目を読み上げ）" if not problems else "\n".join(problems)))
         for r in results:
